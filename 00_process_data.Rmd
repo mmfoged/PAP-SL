@@ -1,0 +1,399 @@
+---
+title: "PAP-SL data processing"
+author: "Mads Foged"
+format: html
+---
+
+Processing, filtering and analysis of organelle lipidomics data. 
+
+1. Processing output files from LipidXplorer
+2. Batch-quantifying via LipidQuan
+3. Merging replicates, data filtering, aggregating technical replicates, blank subtraction
+4. Statistical testing, PCA
+5. Formatting data for visualization and network analysis with Cytoscape
+
+# Data path
+
+```{r, message=F}
+library(here)
+library(tidyverse)
+data_path <- here("Data processing and filtering")
+```
+
+# 1: Processing out-files ----
+
+For a selection of classes, which are quantified more reliably using FRAG1 intensities, FRAG1 intensities are moved to PREC columns before running lipidQ, in order to quantify based on these values instead
+
+## Settings
+
+```{r}
+source("R/1_FRACtoPREC.r")
+
+class_list<-c("Chol", "diHexCer", "triHexCer", "HexCer", "GM3", "GM2", "Cer")
+
+experiments <- c("MF35","MF36","MF38c", "MF38d")
+
+lipidx_folders <- file.path(data_path,
+                            experiments,
+                            "LipidXplorer output files")
+```
+
+## Process
+
+```{r}
+for(i in seq_along(lipidx_folders)) {
+  
+  message(sprintf("%d/%d Processing %s", i, length(lipidx_folders),experiments[i]))
+  
+  frac_to_prec(dir = lipidx_folders[i], class_list = class_list)
+}
+
+
+```
+
+# 2: LipidQuan ----
+
+Run lipidQuan for all datasets. For each dataset, run lipidQuan twice: one with negative mode intensities for PE and PEO- and one with positive mode intensities for those classes. The latter gives better results for PE and PEO-, but has some overlap with positive mode odd-chain PC species.
+
+LipidQ is adapted for batch quantification from ELELAB/LipidQ.
+
+## Settings
+
+```{r}
+
+spike_var <- 8
+
+# internal standards. 
+# The IS mix differs from MF35/36 and MF38c/38d, so different databases are used
+is_database_file <- rep(c(here("Data processing and filtering/Standard_Database_PAPSL.csv"), 
+                          here("Data processing and filtering/Standard_Database_MFV1.csv")),
+                        each = 4)
+
+# Experiment IDs
+exp_nos <- rep(c("35", "36", "38c", "38d"), each = 2)
+
+# polarities
+polarity <- rep(c("negative", "positive"),4)
+
+# number of replicates
+replicate_nos <- rep(c(5,5,1,1), each = 2)
+
+# LipidXplorer output folder
+lipidx_folders <- file.path(data_path,
+                            paste0("MF",exp_nos),
+                            "LipidXplorer output files",
+                            "Move FRAG1 to PREC")
+
+# LipidQuan output folders
+lipidq_folders <- file.path(data_path, 
+                            paste0("MF",exp_nos),
+                            "LipidQuan output files",
+                            paste0("PE and PEO ",polarity," mode"))
+
+# Files to exclude (POS for negative quantification, NEG for positive)
+out_exclude <- rep(c("POS_HIGH_PE", "NEG_HIGH_PE"),4)
+```
+
+## Run LipidQuan
+
+```{r}
+source("R/2_LipidQuan.R")
+
+for(i in seq_along(lipidx_folders)) {
+  
+  message(sprintf("%d/%d Processing %s", i, length(lipidx_folders),paste0("MF",exp_nos[i]," ", polarity[i])))
+  
+  lipidQuanBatch(database_file = is_database_file[i], 
+                 exp_no = exp_nos[i], 
+                 replicate_no = replicate_nos[i], 
+                 spike_var = spike_var,
+                 out_exclude = out_exclude[i] ,
+                 lipidQuan_output_folder = lipidq_folders[i],
+                 lipidX_output_folder = lipidx_folders[i])
+
+}
+
+```
+
+
+
+# 3: Merge_filter.R ----
+
+Run Merge_filter.R for both positive and negative mode PE and PEO-.
+
+Merges datasets, aggregates technical replicates and performs filtering based on values in blank samples, and based on the database.
+
+* Merging LipidQuan output files (tablau output)
+* Aggregating technical replicates (mean values)
+* Filters:
+  * Blank filter
+  * Database filter
+* Calculate mol% and log2 transform
+* generate wide/long format datasets
+* Generate class-level data frame from species data
+* Organize data for supplementary "processing and filtering" figure
+* Remove ctrl and peroxisome samples
+
+For HCT116/HKh-2 data, some runs were of such poor quality that the had to be removed after manual inspection. 
+
+Specifically, these are:
+* cis-Golgi in MF36_2 HKh-2 (MF36_2_080.raw)
+  * Here, we measured an unrealistically high level of cholesterol. 
+*	ER in MF 36_5, HKh-2 (MF36_5_041.raw)
+  *	'Failed' run. 
+*	Mitochondria in 36_5, both cell lines (MF36_5_031.raw, MF36_5_030.raw, MF36_5_131.raw, MF36_5_130.raw)
+  *	Here, the cardiolipin is so poorly detected that it cannot be used. 
+  
+For MF38c: 
+ * CL is removed due to poor quantification of standards
+ * The focus is on D4 ethanolamine (Fig 4J), so CL is irrelevant. 
+
+## Settings
+
+```{r}
+
+## blank FILTER SETTINGS ---
+## set the factor for blank multiplication
+blank_factor <- 5
+
+# min pmol detected (before blank subtraction)
+min_pmol <- 0.001
+
+# set how many replicates a species is allowed to not be detected in
+missing_exp_allowed <- c(rep(1,8)) 
+
+# set how many samples in each experiment a species must be detected in
+min_detected <- c(rep(1,4), rep(3, 4)) 
+
+## GENERIC SAMPLE SETTINGS ---
+database_path <- file.path(data_path, "database.LIPIDMAPS_2021_04_28.csv")
+
+filtered_classes <- rep(list(c("BMP", "TAG", "DAG", "CE", "FA", "FAlc", "LPAO-", "LPA", 
+                     "TAGO-", "DAGO-", "MAGO-", "PAO-", "PAF")),8)
+
+# Add CL to MF38c samples (see notes above)
+filtered_classes[5:6] <- lapply(filtered_classes[5:6], \(x) c(x, "CL"))
+
+
+## SPECIFIC SAMPLE SETTINGS
+exp_ID <- rep(c("MF35", "MF36", "MF38c", "MF38d"), each = 2)
+
+polarity <- rep(c("negative", "positive"),4)
+
+# Number of separately run replicates
+replicate_no <- c(rep(5,4), rep(1,4))
+
+# Exclude poor quality raw files (see notes above)
+removed_raws <- list(NULL,NULL,
+                     c("MF36_5_131.raw" ,"MF36_5_130.raw", "MF36_5_041.raw", 
+                           "MF36_5_031.raw", "MF36_5_030.raw", "MF36_2_080.raw"),
+                     c("MF36_5_131.raw" ,"MF36_5_130.raw", "MF36_5_041.raw", 
+                           "MF36_5_031.raw", "MF36_5_030.raw", "MF36_2_080.raw"),
+                     NULL, NULL,
+                     NULL, NULL)
+
+# Output folders
+lipidQuan_output_folder <- file.path(
+  data_path,
+  exp_ID,
+  "LipidQuan output files",
+  paste0("PE and PEO ",polarity," mode")
+)
+
+samples_path <- file.path(data_path, 
+                          exp_ID,
+                          paste0(exp_ID, "_samples.csv"))
+
+
+```
+
+## Merge and filter
+
+```{r}
+
+source("R/3_Merge_filter.R")
+
+
+for(i in seq_along(lipidQuan_output_folder)) {
+  
+  message(sprintf("%d/%d Processing %s", 
+                  i, length(lipidQuan_output_folder),
+                  paste(exp_ID[i], polarity[i])
+                  ))
+
+merge_and_filter(
+  lipidQuan_output_folder = lipidQuan_output_folder[i],
+  samples_path = samples_path[i],
+  order_organelles = order_organelles,
+  filtered_classes = filtered_classes[[i]],
+  removed_rows = removed_raws[[i]],
+  blank_factor = blank_factor,
+  min_pmol = min_pmol,
+  missing_exp_allowed = missing_exp_allowed[i],
+  min_detected = min_detected[i],
+  database_path = database_path, 
+  exp_ID = exp_ID[i]
+)
+
+}
+
+```
+
+# 4: Analysis ----
+
+
+t-tests:
+Comparisons between all organelles for each class. In cases where samples are only detected in one of the two organelles that are being compared, the tests are carried out as one-sample t tests, using the value defined in test.val (in this case, it is tested whether they are significantly higher than 0.1 mol% on a log2 scale).
+Corrections are Benjamini-Hochberg FDR.
+
+ANOVA: 
+Comparing class average features (DB, Length) and class mol% levels between organelles. No pairwise comparisons. Corrections according to "Holm-Bonferroni" method (FWER) by Holm S., 1979. 
+
+PCA: 
+Organelle PCA, log-scale, replacing NA with log2(1e-5)
+
+## Settings
+
+```{r}
+
+source("R/4_Analysis.R")
+
+## SPECIFIC SAMPLE SETTINGS
+exp_IDs <- rep(c("MF35", "MF36", "MF38c", "MF38d"), each = 2)
+
+polarities <- rep(c("negative", "positive"),4)
+
+# LipidQuant output folders
+lipidQuan_output_folders <- file.path(
+  data_path,
+  exp_IDs,
+  "LipidQuan output files",
+  paste0("PE and PEO ",polarity," mode")
+)
+
+# Analysis output files
+output_files <- paste0(exp_ID,"_analysis_",polarities,".rdata")
+
+# Compare cells or organelles?
+compare <- c(rep("organelle",2), rep("cell",6))
+
+# GENERAL SETTINGS
+
+# Organelles to include in the analysis
+organelles_for_analysis <- rep(list(c("Mitochondria", "ER", "Cis-Golgi", "Trans-Golgi",
+                             "Plasma membrane", "Lysosomes")),8)
+
+organelles_for_analysis[5:8] <- "Whole cells"
+
+# 'imputation' value for NAs in PCA
+pca_na_replace <- log2(1e-5)
+
+# value col to use for t-tests
+value_col <- "molpct"
+
+# compare classes or species?
+lipid_level <- "class"
+
+# For lipids detected in only one condition, test value for one sample test:
+test_val <- log2(0.1)
+
+# Only HeLa is analysed by ANOVA organelle comparisons
+anova_tests <- c(rep(TRUE,2), rep(FALSE,6))
+
+```
+
+## Analysis
+
+```{r}
+for(i in seq_along(lipidQuan_output_folders)) {
+  
+  message(sprintf("%d/%d Processing %s", 
+                  i, length(lipidQuan_output_folders),
+                  paste(exp_ID[i], polarity[i])
+                  ))
+
+analyse_merged_data(lipidQuan_output_folder = lipidQuan_output_folders[i],
+                    organelles_for_analysis = organelles_for_analysis[[i]],
+                    output_file = output_files[i],
+                    test_val = log2(0.1),
+                    compare = compare[i],
+                    lipid_level = "class",
+                    value_col = "molpct", 
+                    p_adjust_method = "BH", 
+                    pca_na_replace = log2(1e-5), 
+                    exp_id = exp_IDs[i],
+                    anova_test = anova_tests[i])
+
+}
+
+```
+
+
+# 5: Correlation analysis ----
+
+Correlations between all species
+
+Network is calculated without cholesterol, since it shows high inter-organelle variability, and might induce all other species to adopt a similar localization profiles. By excluding cholesterol, we can observe more subtle localization profiles of other lipid species.
+
+For HKh-2 vs HCT116:
+Makes one network with HKh-2 and HCT 116 together. This means that clusters indicate common "behaviour" of species across both cell lines, so that if any two lipids differ in their localization between the two cell lines in a similar manner, they will cluster together. Projecting these clusters as colors on the networks that are generated independently for each cell line, and comparing the networks, illustrates how certain clusters "move" in the network.  
+
+For network visualization:
+ 
+* Excludes rows where species and target are the same and only include 
+  correlation coefficients above 0.7 or below -0.7.
+
+## Settings
+
+```{r}
+source("R/5_network_calc.R")
+
+exp_IDs <- rep(c("MF35", "MF36"))
+
+polarity <- "negative"
+
+lipidQuan_output_folders <- file.path(
+  data_path,
+  exp_IDs,
+  "LipidQuan output files",
+  paste0("PE and PEO ",polarity," mode")
+)
+  
+n_clusters <- c(9, 12)
+
+cells = list("HeLa", c("HKH2", "HCT116"))
+
+# Cluster names - use roman numerals for the names
+cluster_roman <- list(c("VII", "III", "VIII", "IV", "V", "VI", "IX", "II", "I"),
+                      c("VII", "III", "VIII", "IV", "V", "VI", "IX", "II", "I", "X", "XI", "XII"))
+
+# Analysis output files
+output_files <- paste0(exp_IDs,"_clustering_",polarity,"_",lapply(cells, \(x) paste0(x, collapse = "_")),".rdata")
+
+```
+
+
+
+## Clustering
+
+```{r}
+for(i in seq_along(lipidQuan_output_folders)) {
+  
+  message(sprintf("%d/%d Processing %s", 
+                  i, length(lipidQuan_output_folders),
+                  paste(exp_IDs[i], polarity)
+                  ))
+
+#debugonce(correlation_and_clustering)
+correlation_and_clustering(lipidQuan_output_folder = lipidQuan_output_folders[i],
+                           cell_type = cells[[i]],
+                           output_file = output_files[i],
+                           exp_id = exp_IDs[i],
+                           n_cluster = n_clusters[i],
+                           cluster_name = cluster_roman[[i]])
+
+}
+```
+
+
+
