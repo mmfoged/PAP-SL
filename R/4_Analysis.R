@@ -323,6 +323,16 @@ organelle_pca <- function(tableau_data,
   # Calculate PCA and organize as tibble
   pca <- prcomp(t(pca_data), scale. = T, center = T)
   
+  # Add % colnames (for plotting)
+  pc_names <- paste0(
+    colnames(pca$x),
+    " (",
+    round(pca$sdev^2 / sum(pca$sdev^2)*100,1),
+    "%)"
+  )
+  
+  colnames(pca$x) <- pc_names
+  
   # organize as tibble
   pca_df <- pca$x %>%
     as_tibble(rownames = "organelle_exp") %>%
