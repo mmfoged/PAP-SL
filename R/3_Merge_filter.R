@@ -85,13 +85,14 @@ merge_files <- function(dir, samples_path, order_organelles, filtered_classes, r
 
   # read sample info, add necessary columns if missing
   samples <- read_csv(samples_path, col_types = cols(.default = "c")) %>%
-    mutate(exp = if ("exp" %in% names(.)) exp else 1,
-           no = if ("no" %in% names(.)) no else 1,
-           organelle = if ("organelle" %in% names(.)) organelle else "whole_cells",
-           file = if ("file" %in% names(.)) file else paste0("raw_",1:nrow(.)),
-           id = if ("id" %in% names(.)) id else sprintf("%03d", 1:nrow(.)),
-           treatment = if ("treatment" %in% names(.)) treatment else "none",
-           cell = ifelse(organelle == "blank","blank",cell)) %>%
+    mutate(
+      exp = if ("exp" %in% names(.)) exp else 1,
+      no = if ("no" %in% names(.)) no else 1,
+      organelle = if ("organelle" %in% names(.)) organelle else "whole_cells",
+      file = if ("file" %in% names(.)) file else paste0("raw_",1:nrow(.)),
+      id = if ("id" %in% names(.)) id else sprintf("%03d", 1:nrow(.)),
+      treatment = if ("treatment" %in% names(.)) treatment else "none",
+      cell = ifelse(organelle == "blank","blank",cell)) %>%
     CorrectOrganelle(., order_organelles = order_organelles)
 
   # Data check
@@ -245,15 +246,6 @@ df %>%
 
 long_to_tableau_format <- function(df) {
 
-  # Add factor levels for class
-  order_class <- names(col_class)[names(col_class) %in% df$class]
-
-  order_class <- c(order_class, setdiff(df$class, order_class))
-  
-  df <- df %>%
-    mutate(class = factor(class, levels = order_class)) %>%
-    arrange(class, length, db)
-  
   col_to_tableau <- function(df, col_name, level = "species") {
   
     df %>%
@@ -268,10 +260,11 @@ long_to_tableau_format <- function(df) {
   # Make column with molpct relative to whole cells
   df <- df %>%
     filter(organelle == "Whole cells") %>%
-    dplyr::select(exp, cell, species, id, wc_molpct = molpct) %>%
-    left_join(df,., by = c("exp", "cell", "species", "id")) %>%
+    group_by(exp, cell, species) %>%
+    summarise(wc_molpct = mean(molpct, na.rm = T), .groups = "drop") %>%
+    left_join(df,., by = c("exp", "cell", "species")) %>%
     mutate(molpct_rel_to_wc = molpct / wc_molpct)
-
+  
   melt_classes_pex <- df %>%
     group_by(id, organelle, exp, cell, treatment, class, cat, file, colname) %>%
     summarise(molpct_class = unique(molpct_class), .groups = "drop") %>%
@@ -502,9 +495,9 @@ merge_and_filter <- function(lipidQuan_output_folder,
   
   # Aggregate technical replicates
   species_aggregate <- aggregate_species(merged_species_long)
-  
+
   summarise_dataset_long(species_aggregate, title = "Aggregating samples")
-  
+
   # blank and replicate filter
   species_replicate_filter <- blank_filter(df = species_aggregate, 
                                            blank_factor = blank_factor, 
