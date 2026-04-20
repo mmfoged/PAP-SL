@@ -589,9 +589,7 @@ makeTableauOutput <- function(classPmol_molPctClass, pmolCalculatedDataSet, molp
   return(tableauOutput)
 }
 
-
-
-#  Main function ----
+# Single-replicate analysis
 
 LipidQuanAnalysis <- function(
     dataList,
@@ -641,5 +639,58 @@ LipidQuanAnalysis <- function(
   write.csv(tableauOutput, file = output_file, quote = FALSE, row.names = FALSE)
   
   cat("saved to", output_file, "\n")
+}
+
+#  Main function ----
+
+lipidQuanBatch <- function(database_file, 
+                           exp_no, 
+                           replicate_no, 
+                           spike_var,
+                           out_exclude,
+                           lipidQuan_output_folder,
+                           lipidX_output_folder) {
+  
+  # Load database
+  database <- 
+    read.table(database_file, stringsAsFactors = FALSE, header = TRUE, sep = ",")
+  
+  # vector of replicates
+  
+  if (replicate_no > 1) {
+    replicate_vector <- paste(exp_no, "_", 1:replicate_no, sep = "")
+  } else {
+    replicate_vector <- exp_no
+  }
+  
+  # loop over replicates
+  for(i in replicate_vector){
+    
+    # print replicate name
+    cat("\n=== Quantifying", i,"===", "\n")
+    
+    # Experiment name 
+    exp_prefix <- i
+    
+    # List of data to be processed
+    lipidx_files <- list.files(lipidX_output_folder)
+    
+    dataList <- lipidx_files[grepl(exp_prefix, lipidx_files) & grepl(".csv", lipidx_files)]
+    
+    # Print names of out-files that were not included in the analysis
+    cat("exluded out-files:", dataList[grepl(out_exclude, dataList)], "\n")
+    
+    # Remove excluded files from list of data to be processed
+    dataList <- dataList[!grepl(out_exclude, dataList)]
+    # Run lipidQuan
+    LipidQuanAnalysis(dataList = file.path(lipidX_output_folder,dataList), 
+                      database = database, 
+                      spike_var = spike_var,
+                      exp_prefix = exp_prefix,
+                      out_exclude = out_exclude, 
+                      lipidQuan_output_folder = lipidQuan_output_folder)
+    
+  } 
+  
 }
 
