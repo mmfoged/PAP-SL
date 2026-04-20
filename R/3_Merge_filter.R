@@ -6,7 +6,7 @@
 # Packages and helpers
 
 source(here("R/utils.R"))
-source(here("R/00_config_plotting.R"))
+source(here("R/config_plotting.R"))
 
 ## 1: Merging tableauOutput files ----------------------------------------------
 
