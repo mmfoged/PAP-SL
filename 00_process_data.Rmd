@@ -257,7 +257,7 @@ Organelle PCA, log-scale, replacing NA with log2(1e-5)
 
 ```{r}
 
-source("R/4_Analysis.R")
+
 
 ## SPECIFIC SAMPLE SETTINGS
 exp_IDs <- rep(c("MF35", "MF36", "MF38c", "MF38d"), each = 2)
@@ -306,6 +306,8 @@ anova_tests <- c(rep(TRUE,2), rep(FALSE,6))
 ## Analysis
 
 ```{r}
+source("R/4_Analysis.R")
+
 for(i in seq_along(lipidQuan_output_folders)) {
   
   message(sprintf("%d/%d Processing %s", 
