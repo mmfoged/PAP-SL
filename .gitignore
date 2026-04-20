@@ -1,0 +1,8 @@
+*
+!.gitignore
+!*.R
+!*.rmd
+!/R/
+!/R/setup/
+!/R/helpers/
+!/R/process/
