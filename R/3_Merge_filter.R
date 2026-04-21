@@ -207,6 +207,10 @@ database_filter <- function(df, database_path) {
   database <- read_csv(database_path, show_col_types = FALSE) %>%
     dplyr::pull(species)
   
+  # Rename D4-labelled species to match format
+  df$species[grepl("^D4", df$species)] <- 
+  gsub("O-","O",gsub("^D4","",gsub("[[:space:]]", "D4 ", df$species[grepl("^D4", df$species)])))
+  
   # add BMP to the database
   database <- c(database, str_replace(database[grepl("^PG ", database)], 
                                       pattern = "PG", 
@@ -214,7 +218,7 @@ database_filter <- function(df, database_path) {
   
   # Filter
   df %>%
-    filter(species %in% database & pmol > 0) 
+    filter(species %in% database & pmol > 0)
   
 }
 
@@ -225,15 +229,16 @@ database_filter <- function(df, database_path) {
 ## 5: Calculate molpct, classpct etc ----
 
 calculate_molpct <- function(df) {
-
+  
 df %>%
-  mutate(organelle = factor(organelle, levels = order_organelles[order_organelles %in% organelle]))%>%
-  group_by(organelle, exp) %>%
+  mutate(organelle = factor(organelle, 
+                            levels = order_organelles[order_organelles %in% organelle]))%>%
+  group_by(organelle, exp, id) %>%
   mutate(molpct = pmol / sum(pmol, na.rm = T) * 100) %>%
-  group_by(organelle, exp, class) %>%
+  group_by(organelle, exp, class, id) %>%
   mutate(molpct_class = sum(molpct, na.rm = T), 
          classpct = pmol / sum(pmol, na.rm = T) * 100) %>%
-  group_by(organelle, exp, cat) %>%
+  group_by(organelle, exp, cat, id) %>%
   mutate(molpct_cat = sum(molpct, na.rm = T), 
          catpct = pmol / sum(pmol, na.rm = T) * 100) %>%
   ungroup() %>%
@@ -264,9 +269,17 @@ long_to_tableau_format <- function(df) {
     summarise(wc_molpct = mean(molpct, na.rm = T), .groups = "drop") %>%
     left_join(df,., by = c("exp", "cell", "species")) %>%
     mutate(molpct_rel_to_wc = molpct / wc_molpct)
+
+  # add n experiments per organelle  
+  df <- df %>%
+    group_by(organelle, species) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    group_by(organelle) %>%
+    summarise(n = max(n), .groups = "drop") %>%
+    left_join(df, ., by = "organelle")
   
   melt_classes_pex <- df %>%
-    group_by(id, organelle, exp, cell, treatment, class, cat, file, colname) %>%
+    group_by(id, organelle, exp, cell, treatment, class, cat, file, colname, n) %>%
     summarise(molpct_class = unique(molpct_class), .groups = "drop") %>%
     mutate(log2_molpct_class = log2(molpct_class))
   
