@@ -179,7 +179,8 @@ correlation_and_clustering <- function(lipidQuan_output_folder,
   # Save data for Cytoscape and figures
   save_to <- file.path(lipidQuan_output_folder, "Results",output_file)
   
-  save(list = c("cor_table"),
+  save(list = c("cor_table", 
+                "clusters"),
        file = save_to
   )
   
