@@ -1,0 +1,1189 @@
+
+# Functions
+
+```{r, message=F}
+library(here)
+library(tidyverse)
+library(ggh4x)
+library(pheatmap)
+
+source("R/config_plotting.R")
+source("R/utils.R")
+
+theme_set(theme_print_function())
+
+
+```
+
+# Data path
+
+```{r}
+data_path <- here("Data processing and filtering")
+```
+
+# --- HeLa data ---
+
+```{r}
+
+# output from merge filter
+load(file.path(data_path,"/MF35/LipidQuan output files/PE and PEO negative mode/Results/PAPSL_MF35.rdata"))
+
+load(file.path(data_path,"/MF35/LipidQuan output files/PE and PEO negative mode/Results/PAPSL_MF35_supplementary.rdata"))
+
+# Output from analysis
+load(file.path(data_path,"MF35/LipidQuan output files/PE and PEO negative mode/Results/MF35_analysis_negative.rdata"))
+
+# Output from 6_network_calculations_HeLa.R
+load(file.path(data_path,"MF35/LipidQuan output files/PE and PEO negative mode/Results/MF35_clustering_negative_HeLa.rdata"))
+
+```
+
+from 4_Merge_filter.R:
+* melt_classes
+* mean_length_db_classes
+* mean_length_db_all
+
+from 5_Data_analysis.R:
+* matrix_rel_to_wc
+
+from 6_network_calculations_HeLa
+* melt_species_cluster
+
+# Fig 1
+
+## 1b: detected lipids
+
+```{r, fig.width=3, fig.height=1.5, dpi=600, out.width="20%"}
+
+
+count_unique_species  <- melt_species %>%
+  filter(!organelle %in% c("Whole cells")) %>%
+  mutate(organelle = droplevels(organelle)) %>%
+  group_by(organelle, species) %>%
+  summarise(mean_molpct = geom_mean(molpct, na.rm = T), .groups = "drop") %>%
+  pivot_wider(names_from = organelle, values_from = mean_molpct) %>%
+  rowwise() %>%
+  mutate(
+    v = list(coalesce(c_across(-species), 0)),
+    all_organelles    = all(v > 0),
+    unique_completely = sum(v > 0) == 1,
+    unique            = max(v) > sort(v, decreasing = TRUE)[2] * 10
+  ) %>%
+  select(-v)
+
+count_unique_species%>%
+  group_by(species) %>%
+  summarise(unique = sum(unique)>0, 
+            all = sum(all_organelles) >0, 
+            unique_completely = sum(unique_completely)>0) %>%
+  summarise(unique_enriched = sum(unique),
+            unique_one_compartment = sum(unique_completely), 
+            in_all_organelles = sum(all),
+            total = n()) %>%
+  pivot_longer(cols = everything()) %>%
+  mutate(name = factor(name, levels = c("unique_enriched","unique_one_compartment",
+                                        "in_all_organelles","total")))%>%
+    ggplot(aes(x = name, y = -value))+
+    geom_bar(stat = "identity", fill = "black", width = .16)+
+    geom_point(size = 6)+
+    geom_text(aes(label = value), color = "white", size = 7/3)+
+    coord_flip(clip = "off")+
+    scale_y_continuous(breaks = c(0,-100,-200,-300), 
+                       labels = c(0,100,200,300))+
+    theme(axis.line.y.left = element_blank(), 
+          panel.grid.major.y = element_blank(), 
+          axis.text.x = element_text(angle = 0, hjust = .5), 
+          axis.text.y = element_text(hjust = 0)
+          )+
+    labs(y = NULL, x = NULL)+
+    ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                            cols = unit(2.5, "cm"))
+
+ggsave(
+  file.path(data_path, "/figures/pdf/Fig1b_count_all_enriched_unique.pdf"),
+  height = 4.5,
+  width = 6,
+  units = "cm"
+)
+
+
+
+```
+
+
+## 1c: HeLa whole cell class mol% pie chart
+
+```{r, fig.width=1.5, fig.height=1.5, dpi=300, out.width="20%"}
+class_molpct_summary <- melt_classes%>%
+  group_by(class, organelle) %>%
+  summarise(molpct = geom_mean(molpct_class, na.rm = T), .groups = "drop")
+
+
+class_molpct_summary %>%
+  filter(organelle %in% "Whole cells") %>%
+  ggplot(aes(x = "", y = molpct, fill = class))+
+    geom_col(show.legend = F, color = "white", linewidth = .1)+
+    geom_text(aes(label = class, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_manual(values = col_class)+
+    labs(x = NULL, y = NULL)  +
+    theme(axis.text.x = element_blank(), 
+          axis.line.x.bottom = element_blank(),
+          axis.line.y.left = element_blank()) +
+  ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                        cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig1c_WC_class_molpct_circle.pdf"), height = 1.5, width = 1.5)
+
+
+```
+
+
+
+## 1d: organelle class mol% pie charts
+
+```{r, fig.width=3, fig.height=4, dpi=100, out.width="20%"}
+
+class_molpct_summary %>%
+  filter(!organelle %in% c("LMF", "Whole cells")) %>%
+  ggplot(aes(x = "", y = molpct, fill = class))+
+    geom_col(show.legend = F, color = "white", linewidth = .1)+
+    geom_text(aes(label = class, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_manual(values = col_class)+
+    labs(x = NULL, y = NULL)  +
+  facet_wrap(~organelle, nrow = 3)+
+    theme(axis.text.x = element_blank(), 
+          axis.line.x.bottom = element_blank(),
+          axis.line.y.left = element_blank()) +
+  ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                        cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig1c_WC_class_molpct>_circle.pdf"), height = 4, width = 3)
+
+```
+
+
+
+## 1e: all classes mol% barplot
+
+```{r, fig.width=8, fig.height=3, dpi=600, out.width="20%"}
+melt_classes %>%
+  filter(!organelle %in% c( "LMF", "Peroxisomes")) %>%
+  ggplot(aes(x = organelle, y = molpct_class, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", position = "dodge", show.legend = F, linewidth = 0.2, color = "black")+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle)+
+  geom_point(size = 0.2, show.legend = F)+
+  coord_cartesian(clip = "off")+
+  labs(y = "mol%", x = NULL)+
+  facet_wrap(~class, nrow = 3, scales = "free_y")+
+  scale_y_continuous(expand = expansion(mult = c(0,0.05)))+
+  ggh4x::force_panelsizes(rows = unit(1.064,"cm"), 
+                          cols = unit(1.509,"cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig1e_allClassesMolpct.pdf"), height = 4, width = 11)
+```
+
+
+## 1f: organelle Pearson cor heatmap
+
+```{r}
+
+
+matrix_rel_to_wc <- melt_species %>%
+  filter(!organelle == "Whole cells") %>%
+  mutate(organelle_exp = paste(organelle, exp, sep = "@"))%>%
+  pivot_wider(names_from = organelle_exp, values_from = molpct_rel_to_wc, id_cols = species) %>%
+  column_to_rownames(var = "species")
+
+# remove NA rows
+matrix_rel_to_wc <- matrix_rel_to_wc[rowSums(!is.na(matrix_rel_to_wc))>0,]
+  
+# log2 transform
+matrix_rel_to_wc <- log2(matrix_rel_to_wc)
+
+# Annotation matrix
+cor_annotation <- data.frame(organelle = gsub("@.*", "", colnames(matrix_rel_to_wc)))
+rownames(cor_annotation) <- colnames(matrix_rel_to_wc)
+
+heatmap_pearson <- matrix_rel_to_wc %>%
+  cor(use = "pairwise.complete.obs") %>%
+  pheatmap::pheatmap(color = color2, 
+           breaks = seq(-1,1, length.out = 101), 
+           border_color = NA, 
+           annotation_row = cor_annotation, 
+           annotation_col = cor_annotation, 
+           annotation_colors = list(organelle = col_organelle[names(col_organelle) %in% cor_annotation$organelle]),
+           show_rownames = F,
+           show_colnames = F,
+           cellheight = 7, 
+           cellwidth = 7, 
+           filename = file.path(data_path,"/figures/pdf/Fig1f_rel_to_wc_cor_cluster.pdf"),
+           height = 8, 
+           width = 8
+           )
+
+```
+
+
+## 1g: organelle PCA
+
+```{r, fig.width=2, fig.height=2, dpi=300, out.width="50%"}
+pca_df %>%
+  ggplot(aes(y = -`PC1 (28.2%)`, x = `PC2 (20.7%)`, fill = organelle))+
+  geom_point(size = 2, shape = 21, show.legend = F)+
+  scale_fill_manual(values = col_organelle)+
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_blank(), 
+        axis.ticks = element_line(size = 0.2))+
+  ggh4x::force_panelsizes(rows = unit(2.5, "cm"), cols =  unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig1g_PCA_1.pdf"), height = 2, width = 2)
+
+pca_df %>%
+  ggplot(aes(y = -`PC3 (8.6%)`, x = `PC2 (20.7%)`, fill = organelle))+
+  geom_point(size = 2, shape = 21, show.legend = F)+
+  scale_fill_manual(values = col_organelle)+
+  theme(panel.grid.major.x = element_blank(),
+        panel.grid.major.y = element_blank(), 
+        axis.ticks = element_line(size = 0.2))+
+  ggh4x::force_panelsizes(rows = unit(2.5, "cm"), cols =  unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig1g_PCA_2.pdf"), height = 2, width = 2)
+```
+
+
+## 1h: organelle category mol% stacked bar plots 
+
+```{r, fig.width=2.3, fig.height=2.1, dpi=200, out.width="20%"}
+
+melt_species%>%
+  mutate(cat = factor(cat, levels = rev(c("ST", "SL", "LGPL", "LGPLO-", "GPLO-", "GPL"))))%>%
+  filter(!organelle %in% c( "Whole cells", "LMF")) %>%
+  group_by(cat, organelle, species) %>%
+  summarise(molpct_mean = mean(ifelse(is.na(molpct),0, molpct), na.rm = T), .groups = "drop") %>%
+  group_by(cat, organelle) %>%
+  summarise(cat.molpct = sum(molpct_mean, na.rm = T), .groups = "drop") %>%
+  ggplot(aes(x = organelle, y = cat.molpct, fill = cat))+
+    geom_bar(stat = "identity", show.legend = T, linewidth =0.1, color = "white")+
+    scale_fill_manual(values = col_cat)+
+    labs(y = "mol%", x = NULL)+
+    scale_y_continuous(expand = expansion(0,0))+
+    force_panelsizes(rows = unit(2.4, "cm"), cols =  unit(2.26, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig1h_Categories_fill_bars.pdf"), height = 2.1, width = 2.3)
+
+```
+
+
+## 1i: PG/BMP, shotgun vs LC-MS
+
+```{r, fig.width=2.5, fig.height=1.5, dpi=300, out.width="20%"}
+# Read file
+lcms_data <- read.csv(file.path(data_path,"/BMP and PG analysis_LC_MS.csv"))
+
+# Remove space at the end of species names
+lcms_data$species <- str_remove(lcms_data$species, " $") 
+
+# Add PG species that are "missing"
+missing_PG <- str_replace(lcms_data$species[!str_replace(lcms_data$species, pattern = "BMP", replacement = "PG") %in% lcms_data$species], pattern = "BMP", replacement = "PG")
+
+lcms_data <- rbind(lcms_data, data.frame(species = missing_PG, classpct = 0, rep = NA))
+
+# Add lipid info
+lcms_data <- cbind(lcms_data, lipid_info(lcms_data$species))
+
+lcms_data$species_size <- paste(lcms_data$length, lcms_data$db, sep = ":")
+
+lcms_data %>%
+  mutate(length_color = ifelse(length < 36, "34-", ifelse(length > 38, "40+", "36,38")), 
+       db_alpha = ifelse(db == 0, "0", ifelse(db == 1, "1", "2+"))) %>%
+  group_by(species_size, class, length, length_color, db_alpha)%>%
+  summarise(classpct = geom_mean(classpct), .groups = "drop")%>%
+  ggplot(aes(x = "", y = classpct, group = species_size))+
+    geom_col(show.legend = F, color = "white", linewidth = 0.1, aes(fill = as.character(length_color), alpha = db_alpha))+
+    geom_text(aes(label = species_size, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+  scale_fill_brewer(type = "qual", palette = 6)+
+  scale_alpha_manual(values = c("0" = 1, "1" = 0.7, "2+" = 0.4))+  
+  scale_y_continuous(expand = c(0,0))+
+  facet_wrap(~class)+
+  ggtitle("Whole-cell HeLa BMP and PG quantification by LC-MS" )+
+  labs(x = NULL, y = NULL)+
+  theme(axis.text.x = element_blank(), 
+      axis.line.x.bottom = element_blank(),
+      axis.line.y.left = element_blank(), 
+      panel.grid.major.y = element_blank()) +
+  ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                          cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig1i_BMP_PG_LCMS.pdf"), height = 1.5, width = 2.5)
+
+melt_species$species_size <- paste(melt_species$length, melt_species$db, sep = ":")
+
+melt_species %>%
+  mutate(length_color = ifelse(length < 36, "34-", ifelse(length > 38, "40+", "36,38")), 
+       db_alpha = ifelse(db == 0, "0", ifelse(db == 1, "1", "2+"))) %>%
+  filter(class %in% "PG",
+         organelle %in% c("Lysosomes", "Mitochondria"))%>%
+  mutate(classpct = if_else(is.na(classpct),true = 0, false = classpct)) %>%
+  group_by(species_size, length, organelle, length_color, db_alpha) %>%
+  summarise(classpct = sum(classpct/n, na.rm = T), .groups = "drop") %>%
+  ggplot(aes(x = "", y = classpct, group = species_size)) +
+    geom_col(show.legend = F, color = "white", linewidth = 0.05, 
+             aes(fill = as.character(length_color), alpha = db_alpha))+
+    geom_text(aes(label = species_size, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_brewer(type = "qual", palette = 6)+
+    scale_alpha_manual(values = c("0" = 1, "1" = 0.7, "2+" = 0.4))+  
+    facet_wrap(~organelle)+
+    ggtitle("HeLa Mitochondria vs Lysosomes PG/BMP" )+
+    labs(x = NULL, y = NULL)+
+    theme(axis.text.x = element_blank(), 
+        axis.line.x.bottom = element_blank(),
+        axis.line.y.left = element_blank(), 
+        panel.grid.major.y = element_blank()) +
+    ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                            cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig1i_mito_lyso.pdf"), height = 1.5, width = 2.5)
+
+
+```
+
+
+# Fig 2
+
+## 2a: heatmap relative to whole cells
+
+```{r}
+class_order <- names(col_class)
+
+order_species <- melt_species %>%
+  mutate(class = factor(class, levels = class_order))%>%
+  arrange(class, length, db) %>%
+  pull(species) %>%
+  unique()
+
+order_df <- data.frame(order_species, class = lipid_class_name(order_species)) %>%
+  column_to_rownames(var = "order_species")
+
+melt_species %>%
+  filter(!organelle =="Whole cells")%>%
+  dplyr::mutate(exp_organelle = paste(exp, organelle, sep = "_"), 
+                molpct_rel_to_wc = log2(molpct_rel_to_wc)) %>%
+  arrange(organelle, exp) %>%
+  dplyr::select(exp_organelle, species, molpct_rel_to_wc) %>%
+  mutate(species = factor(species, levels = order_species[order_species %in% species])) %>%
+  pivot_wider(names_from = exp_organelle, values_from = molpct_rel_to_wc) %>%
+  arrange(species) %>%
+  column_to_rownames("species") %>%
+  pheatmap::pheatmap(cluster_cols = F, 
+                   cluster_rows = F,
+                   color = color2, 
+                   breaks = seq(-2,2,length.out = 101), 
+                   na_col = "dark blue", 
+                   filename = file.path(data_path,"/figures/pdf/Fig2a_heatmap_rel_to_WC.pdf"),
+                   height = 10,
+                   width = 7, 
+                   cellwidth = 3,
+                   border_color = NA,          
+                   annotation_row = order_df["class"],
+                   annotation_colors = list(class = col_class[names(col_class) %in% order_df$class]))
+
+```
+
+2b: Network
+
+## 2c: Line plots with network
+
+```{r, fig.width=1.7, fig.height=5.5, dpi=100, out.width="20%"}
+
+melt_species_cluster <- clusters %>%
+  dplyr::select(species, cluster_name)%>%
+inner_join(melt_species, ., by = join_by(species)) %>%
+  filter(!organelle %in% "Whole cells") %>%
+  group_by(exp, organelle) %>%
+  mutate(sum_molpct = sum(molpct, na.rm = T), 
+         molpct_noChol = molpct/sum_molpct*100) %>%
+  group_by(species) %>%
+  mutate(max_molpct = max(molpct_noChol, na.rm = T), 
+         norm_molpct_noChol = molpct_noChol/max_molpct) %>%
+  group_by(organelle, species) %>%
+  mutate(n = n()) %>%
+  # Average including 'undetected' lipids as 0
+  group_by(organelle) %>%
+  mutate(n = max(n), 
+         norm_molpct_noChol = norm_molpct_noChol / n) %>%
+  group_by(organelle, species) %>%
+  mutate(norm_molpct_noChol = sum(norm_molpct_noChol))
+
+cluster_colors <- c("I" = "#97bcd7", 
+                                "II" = "#f574a4",
+                                "III" = "#aa2451",
+                                "IV" = "#7a183c",
+                                "V" = "#243f5a",
+                                "VI" = "#358b59",
+                                "VII" = "grey",
+                                "VIII" = "grey",
+                                "IX" = "grey")
+
+# Plot without cholesterol
+melt_species_cluster %>%
+  filter(!cluster_name %in% c("VII", "VIII", "IX"))%>%
+  ggplot(aes(x = organelle, y = norm_molpct_noChol, group = species))+
+  facet_wrap(~cluster_name, scales = "fixed", ncol = 1)+
+  geom_line(stat = "identity", fun = "mean", linewidth = 0.2, color = "grey")+
+  geom_line(aes(group = cluster_name, color = cluster_name), 
+            stat = "summary", fun = "mean", linewidth = 2)+
+  scale_color_manual(values = cluster_colors)+
+  labs(y = "Relative enrichment", x = NULL, color = "Cluster")+
+  theme(panel.grid.major.x = element_line(linewidth = .2, color = "grey", linetype = 2),
+        panel.grid.major.y = element_blank())+
+  ggh4x::force_panelsizes(cols = unit(1.94,"cm"),
+                          rows = unit(1.33,"cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig2c_species_cluster_lines_without_chol.pdf"), height = 5.5, width = 1.7)
+
+```
+
+
+## 2d: Dot plots - species and clusters
+
+```{r, fig.width=6, fig.height=1.5, dpi=300, out.width="20%"}
+
+melt_species_cluster%>%
+  filter(cat %in% "GPL",
+         class != "CL") %>%
+ggplot(aes(x = length, y = db, fill = cluster_name))+
+  geom_point(shape = 21, size = 1.8, stroke = 0.2)+
+  facet_wrap(~class, nrow = 1)+
+  scale_fill_manual(values = cluster_colors)+
+  coord_cartesian(clip = "off")+
+  scale_x_continuous(breaks = seq(28,80,2))+
+  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,12))+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        panel.grid.major.x = element_line(linewidth = .2, color = "grey", linetype = 2))+
+  ggh4x::force_panelsizes(cols = unit(1.38,"cm"),
+                          rows = unit(2,"cm"))
+  
+ggsave(file.path(data_path, "/Figures/pdf/Fig2d_Species_bubles_cluster_GPL.pdf"), height = 1.5, width = 6)
+
+
+melt_species_cluster%>%
+  filter(cat %in% "GPL",
+         class == "CL") %>%
+ggplot(aes(x = length, y = db, fill = cluster_name))+
+  geom_point(shape = 21, size = 1.8, stroke = 0.2)+
+  facet_wrap(~class, nrow = 1)+
+  scale_fill_manual(values = cluster_colors)+
+  coord_cartesian(clip = "off")+
+  scale_x_continuous(breaks = seq(28,80,2))+
+  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,12))+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        panel.grid.major.x = element_line(linewidth = .2, color = "grey", linetype = 2))+
+  ggh4x::force_panelsizes(cols = unit(2*6/13,"cm"),
+                          rows = unit(2,"cm"))
+  
+ggsave(file.path(data_path, "/Figures/pdf/Fig2d_Species_bubles_cluster_CL.pdf"), height = 1.5, width = 2)
+
+melt_species_cluster%>%
+  filter(cat %in% "GPLO-") %>%
+ggplot(aes(x = length, y = db, fill = cluster_name))+
+  geom_point(shape = 21, size = 1.8, stroke = 0.2)+
+  facet_wrap(~class, nrow = 1)+
+  scale_fill_manual(values = cluster_colors)+
+  coord_cartesian(clip = "off")+
+  scale_x_continuous(breaks = seq(28,80,2))+
+  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,12))+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        panel.grid.major.x = element_line(linewidth = .2, color = "grey", linetype = 2))+
+  ggh4x::force_panelsizes(cols = unit(1.38,"cm"),
+                          rows = unit(2,"cm"))
+  
+ggsave(file.path(data_path, "/Figures/pdf/Fig2d_Species_bubles_cluster_GPLO.pdf"), height = 1.5, width = 4)
+
+
+melt_species_cluster%>%
+  filter(cat %in% c("LGPL", "LGPLO-")) %>%
+ggplot(aes(x = length, y = db, fill = cluster_name))+
+  geom_point(shape = 21, size = 1.8, stroke = 0.2)+
+  facet_wrap(~class, nrow = 1)+
+  scale_fill_manual(values = cluster_colors)+
+  coord_cartesian(clip = "off")+
+  scale_x_continuous(breaks = seq(10,28,2))+
+  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,12))+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        panel.grid.major.x = element_line(linewidth = .2, color = "grey", linetype = 2))+
+  ggh4x::force_panelsizes(cols = unit(5/13*2,"cm"),
+                          rows = unit(2,"cm"))
+  
+ggsave(file.path(data_path, "/Figures/pdf/Fig2d_Species_bubles_cluster_LGPL.pdf"), height = 1.5, width = 5)
+
+
+melt_species_cluster%>%
+  filter(cat %in% "SL") %>%
+ggplot(aes(x = length, y = db, fill = cluster_name))+
+  geom_point(shape = 21, size = 1.8, stroke = 0.2)+
+  facet_wrap(~class, nrow = 1)+
+  scale_fill_manual(values = cluster_colors)+
+  coord_cartesian(clip = "off")+
+  scale_x_continuous(breaks = seq(28,50,2))+
+  scale_y_continuous(breaks = seq(0,12,1), limits = c(0,3))+
+  theme(axis.text.x = element_text(angle = 0, hjust = 0.5),
+        panel.grid.major.x = element_line(linewidth = .2, color = "grey", linetype = 2))+
+  ggh4x::force_panelsizes(cols = unit(7/13*2,"cm"),
+                          rows = unit(0.53,"cm"))
+  
+ggsave(file.path(data_path, "/Figures/pdf/Fig2d_Species_bubles_cluster_SL.pdf"), height = 1.5, width = 5)
+```
+
+
+## 2e: Violin - inter/intra class
+
+```{r, fig.width=1, fig.height=3, dpi=300, out.width="20%"}
+cor_table%>%
+ggplot(aes(x = same_classlabel, y = cor, fill = same_classlabel))+
+  geom_violin(quantile.linetype = 1, show.legend = F, linewidth = 0.2)+
+  scale_fill_manual(values = c("dark grey", "light grey"))+
+  labs(fill = NULL, x = NULL)+
+  labs(y = "Pearson's r")+
+  ggh4x::force_panelsizes(cols = unit(1.3,"cm"),
+                          rows = unit(2.4,"cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig2e_violin_class.pdf"), height = 3, width = 1)
+
+
+```
+
+
+2f Prism
+
+2g Prism
+
+2h Prism
+
+## 2i: Sphingolipids stacked barplot
+
+```{r, fig.width=2.1, fig.height=2, dpi=300, out.width="20%"}
+
+melt_classes%>%
+  dplyr::filter(!organelle %in% c("Whole cells", "LMF"), 
+                cat == "SL") %>%
+  dplyr::mutate(class = ifelse(class %in% c("SM", "Cer"), as.character(class), "GlycoSLs")) %>%
+  dplyr::mutate(class = factor(class, levels = c("SM", "Cer", "GlycoSLs"))) %>%
+  dplyr::group_by(cat, organelle, class, exp) %>%
+  dplyr::summarise(molpct = sum(molpct_class, na.rm = T), .groups = "drop") %>%
+  dplyr::group_by(cat, organelle, class) %>%
+  dplyr::summarise(molpct_mean = mean(ifelse(is.na(molpct),0, molpct)), .groups = "drop") %>%
+  
+ggplot(aes(x = organelle, y = molpct_mean, fill = class))+
+  geom_bar(stat = "identity", color = "white", linewidth = 0.2, show.legend = T, position = "fill")+
+  scale_y_continuous(expand = expansion(0,0))+
+  scale_fill_manual(values = c(col_class[names(col_class) %in% c("SM", "Cer")], "GlycoSLs" = "#EAACA6" ))+  
+  labs(x = NULL, y = "% of total non-PC diacylGPLs")+
+  ggh4x::force_panelsizes(cols = unit(2.1,"cm"),
+                        rows = unit(2,"cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig2i_SLs.pdf"), height = 2, width = 2.1)
+
+```
+
+# Fig 3
+
+3a - Scheme
+
+3b - Prism
+
+## 3c: PCO- / PC ratio barplot 
+
+```{r, fig.width=1.5, fig.height=1.5, dpi=300, out.width="20%"}
+
+ratio_PC_PCO <- melt_classes %>%
+  filter(organelle != "Whole cells",
+         class == "PCO-") %>%
+  dplyr::select(exp, organelle, molpct_pco =molpct_class) %>%
+  inner_join(melt_classes) %>%
+  mutate(molpct_ratio =  molpct_pco / molpct_class) %>%
+  filter(class == "PC")
+  
+
+ratio_PC_PCO%>%
+ggplot(aes(x = organelle, y = molpct_ratio, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", show.legend = F)+
+  geom_point(size = 0.2, show.legend = F)+
+  scale_y_continuous(expand = c(0,0))+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle[!names(col_organelle) %in% c("b", "blank", "Blank", "Ctrl", "Peroxisomes", "Whole cells", "LMF")])+
+  coord_cartesian(clip = "off")+
+  labs(x = NULL, y = "PCO-/PC ratio")+
+  theme(axis.text.x = element_blank())+
+  ggh4x::force_panelsizes(cols = unit(1.82,"cm"),
+                        rows = unit(2.46,"cm"))
+
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig3b_PCO_PC_ratio.pdf"), height = 1.5, width = 1.5)
+```
+
+
+3d: Correlation intra/inter class - Prism
+
+3e: Cosine similarity GPLS - Prism
+
+## 3f: HeLa whole cells class pie
+
+```{r, fig.width=4, fig.height=4, dpi=100, out.width="20%"}
+
+melt_species %>%
+  mutate(length_color = ifelse(length < 36, "34-", ifelse(length > 38, "40+", "36,38")), 
+       db_alpha = ifelse(db == 0, "0", ifelse(db == 1, "1", "2+"))) %>%
+  filter(class %in% c("PC", "PS", "PG", "PI", "PE", "PA", "PEO-", "PCO-"),
+         organelle %in% c("Whole cells"))%>%
+  mutate(classpct = if_else(is.na(classpct),true = 0, false = classpct)) %>%
+  group_by(species_size, length, organelle, length_color, db_alpha, class) %>%
+  summarise(classpct = sum(classpct/n, na.rm = T), .groups = "drop") %>%
+  ggplot(aes(x = "", y = classpct, group = species_size)) +
+    geom_col(show.legend = F, color = "white", linewidth = 0.05, 
+             aes(fill = as.character(length_color), alpha = db_alpha))+
+    geom_text(aes(label = species_size, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_manual(values = c("blue", "orange", "red"))+
+    scale_alpha_manual(values = c("0" = 1, "1" = 0.7, "2+" = 0.4))+  
+    facet_wrap(~class)+
+    labs(x = NULL, y = NULL)+
+    theme(axis.text.x = element_blank(), 
+        axis.line.x.bottom = element_blank(),
+        axis.line.y.left = element_blank(), 
+        panel.grid.major.y = element_blank()) +
+    ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                            cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig3f_WC_class_molpct_circle.pdf"), height = 4, width = 4)
+```
+
+
+3g - HeLa data - Prism
+
+## 3h: PEO-/PE, PEO-/PC ratio barplots 
+
+```{r, fig.width=1.5, fig.height=1.5, dpi=300, out.width="20%"}
+
+ratio_PE_PEO <- melt_classes %>%
+  filter(organelle != "Whole cells",
+         class == "PEO-") %>%
+  dplyr::select(exp, organelle, molpct_pco =molpct_class) %>%
+  inner_join(melt_classes) %>%
+  mutate(molpct_ratio =  molpct_pco / molpct_class) %>%
+  filter(class == "PE")
+
+
+ratio_PC_PEO <- melt_classes %>%
+  filter(organelle != "Whole cells",
+         class == "PEO-") %>%
+  dplyr::select(exp, organelle, molpct_pco =molpct_class) %>%
+  inner_join(melt_classes) %>%
+  mutate(molpct_ratio =  molpct_pco / molpct_class) %>%
+  filter(class == "PC")
+
+ratio_PCO_PEO<- melt_classes %>%
+  filter(organelle != "Whole cells",
+         class == "PEO-") %>%
+  dplyr::select(exp, organelle, molpct_pco =molpct_class) %>%
+  inner_join(melt_classes) %>%
+  mutate(molpct_ratio =  molpct_pco / molpct_class) %>%
+  filter(class == "PCO-")
+  
+
+ratio_PE_PEO%>%
+ggplot(aes(x = organelle, y = molpct_ratio, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", show.legend = F)+
+  geom_point(size = 0.2, show.legend = F)+
+  scale_y_continuous(expand = c(0,0))+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle[!names(col_organelle) %in% c("b", "blank", "Blank", "Ctrl", "Peroxisomes", "Whole cells", "LMF")])+
+  coord_cartesian(clip = "off")+
+  labs(x = NULL, y = "PEO-/PE ratio")+
+  theme(axis.text.x = element_blank())+
+  ggh4x::force_panelsizes(cols = unit(1.82,"cm"),
+                        rows = unit(2.46,"cm"))
+
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig3h_PEO_PE_ratio.pdf"), height = 1.5, width = 1.5)
+
+ratio_PC_PEO%>%
+ggplot(aes(x = organelle, y = molpct_ratio, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", show.legend = F)+
+  geom_point(size = 0.2, show.legend = F)+
+  scale_y_continuous(expand = c(0,0))+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle[!names(col_organelle) %in% c("b", "blank", "Blank", "Ctrl", "Peroxisomes", "Whole cells", "LMF")])+
+  coord_cartesian(clip = "off")+
+  labs(x = NULL, y = "PEO-/PC ratio")+
+  theme(axis.text.x = element_blank())+
+  ggh4x::force_panelsizes(cols = unit(1.82,"cm"),
+                        rows = unit(2.46,"cm"))
+
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig3h_PEO_PC_ratio.pdf"), height = 1.5, width = 1.5)
+
+
+ratio_PCO_PEO%>%
+ggplot(aes(x = organelle, y = molpct_ratio, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", show.legend = F)+
+  geom_point(size = 0.2, show.legend = F)+
+  scale_y_continuous(expand = c(0,0))+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle[!names(col_organelle) %in% c("b", "blank", "Blank", "Ctrl", "Peroxisomes", "Whole cells", "LMF")])+
+  coord_cartesian(clip = "off")+
+  labs(x = NULL, y = "PEO-/PCO- ratio")+
+  theme(axis.text.x = element_blank())+
+  ggh4x::force_panelsizes(cols = unit(1.82,"cm"),
+                        rows = unit(2.46,"cm"))
+
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig3h_PEO_PCO_ratio.pdf"), height = 1.5, width = 1.5)
+```
+
+## 3i: HeLa: GPL categories and ether lipids stacked bar plots
+
+```{r, fig.width=2.3, fig.height=2.1, dpi=200, out.width="20%"}
+
+melt_species%>%
+  mutate(cat = ifelse(class %in% c("PCO-", "PEO-"), class, as.character(cat)))%>%
+  filter(!organelle %in% c( "Whole cells", "LMF"), 
+         cat %in% c(  "PEO-", "PCO-","LGPL", "GPL")) %>%
+  mutate(cat = factor(cat, levels = c("GPL","LGPL","PCO-", "PEO-")))%>%
+  group_by(cat, organelle, species) %>%
+  summarise(molpct_mean = mean(ifelse(is.na(molpct),0, molpct), na.rm = T), .groups = "drop") %>%
+  group_by(cat, organelle) %>%
+  summarise(cat.molpct = sum(molpct_mean, na.rm = T), .groups = "drop") %>%
+  group_by(organelle) %>%
+  mutate(molpct_total = sum(cat.molpct), 
+         cat.molpct = cat.molpct/molpct_total*100)%>%
+  ggplot(aes(x = organelle, y = cat.molpct, fill = cat))+
+    geom_bar(stat = "identity", show.legend = T, linewidth =0.1, color = "white")+
+#    scale_fill_manual(values = col_cat)+
+    labs(y = "mol% of total GPLs", x = NULL)+
+    scale_y_continuous(expand = expansion(0,0))+
+    force_panelsizes(rows = unit(2.4, "cm"), cols =  unit(2.26, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig3i_CategoriesEtherlipids_fill_bars.pdf"), height = 2.1, width = 2.3)
+```
+
+3j - Prism
+
+# Fig 4
+
+4a - Cytoscape HeLa network
+
+4b - prism
+
+## 4c: PC species molpct
+
+```{r, fig.width=2, fig.height=3, dpi=200, out.width="50%"}
+melt_species %>%
+  filter(!organelle %in% c( "LMF", "Peroxisomes"),
+         species %in% c("PC 30:0", "PC 32:0")) %>%
+  ggplot(aes(x = organelle, y = molpct, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", position = "dodge", show.legend = F, linewidth = 0.2, color = "black")+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle)+
+  geom_point(size = 0.2, show.legend = F)+
+  coord_cartesian(clip = "off")+
+  labs(y = "mol%", x = NULL)+
+  facet_wrap(~species, nrow = 3, scales = "free_y")+
+  scale_y_continuous(expand = expansion(mult = c(0,0.05)))+
+  ggh4x::force_panelsizes(rows = unit(1.064,"cm"), 
+                          cols = unit(1.509,"cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig4x_PCMolpct.pdf"), height = 4, width = 11)
+```
+
+
+## 4d: organelle class pie charts
+
+```{r, fig.width=5, fig.height=10, dpi=200, out.width="50%"}
+
+melt_species %>%
+  mutate(length_color = ifelse(length < 36, "34-", ifelse(length > 38, "40+", "36,38")), 
+       db_alpha = ifelse(db == 0, "0", ifelse(db == 1, "1", "2+"))) %>%
+  filter(class %in% c("PC", "PS", "PI", "PE", "PEO-", "PCO-"),
+         organelle %in% c("Mitochondria", "ER", "Plasma membrane", "Lysosomes"))%>%
+  mutate(classpct = if_else(is.na(classpct),true = 0, false = classpct)) %>%
+  group_by(species_size, length, organelle, length_color, db_alpha, class) %>%
+  summarise(classpct = sum(classpct/n, na.rm = T), .groups = "drop") %>%
+  ggplot(aes(x = "", y = classpct, group = species_size)) +
+    geom_col(show.legend = F, color = "white", linewidth = 0.05, 
+             aes(fill = as.character(length_color), alpha = db_alpha))+
+    geom_text(aes(label = species_size, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_manual(values = c("blue", "orange", "red"))+
+    scale_alpha_manual(values = c("0" = 1, "1" = 0.7, "2+" = 0.4))+  
+    facet_wrap(~class+organelle, ncol = 4)+
+    labs(x = NULL, y = NULL)+
+    theme(axis.text.x = element_blank(), 
+        axis.line.x.bottom = element_blank(),
+        axis.line.y.left = element_blank(), 
+        panel.grid.major.y = element_blank()) +
+    ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                            cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig4d_organelle_class_molpct_circle.pdf"), height = 10, width = 5)
+```
+
+
+4e: prism
+4f: prism
+
+## 4g: Mean db and length, HeLa
+
+```{r, fig.width=5, fig.height=2.5, dpi=300, out.width="20%"}
+mean_length_db_classes%>%
+  filter(!organelle %in% c("LMF", "Whole cells"),
+         cat %in% c( "GPL", "GPLO-" )| class %in% c("SM"),
+         !class %in% c("CL", "PG", "PA")) %>%
+  ggplot(aes(x = class, y = mean_db, group = organelle, fill = organelle))+
+  geom_point(shape = 21,
+             size = 2,
+             position = position_dodge(width = 0.9),
+             stat = "summary", fun = "mean") +
+  stat_summary(fun.data = "mean_sdl", 
+               fun.args = c(mult = 1), 
+               show.legend = F,
+               position = position_dodge(width = 0.9), 
+               linewidth = .5, 
+               geom = "linerange")+
+  scale_fill_manual(values = col_organelle)+
+  labs(y = "Mean no. of DBs", x = NULL)+
+  ggh4x::force_panelsizes(rows = unit(3, "cm"), cols =  unit(7, "cm")) 
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig4g_length_db.pdf"), height = 2.5, width = 5)
+```
+
+
+## 4h: Mean db and length, all classes
+
+```{r, fig.width=3, fig.height=2.5, dpi=300, out.width="20%"}
+mean_length_db_all%>%
+  filter(!organelle %in% c("LMF", "Whole cells")) %>%
+  ggplot(aes(x = organelle, y = mean_db, group = organelle, fill = organelle))+
+  geom_point(shape = 21,
+             size = 2,
+             position = position_dodge(width = 0.9),
+             stat = "summary", fun = "mean") +
+  stat_summary(fun.data = "mean_sdl", 
+               fun.args = c(mult = 1), 
+               show.legend = F,
+               position = position_dodge(width = 0.9), 
+               linewidth = .5, 
+               geom = "linerange")+
+  scale_fill_manual(values = col_organelle)+
+  labs(y = "Mean no. of DBs", x = NULL)+
+  ggh4x::force_panelsizes(rows = unit(3, "cm"), cols =  unit(2, "cm")) 
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig4h_db.pdf"), height = 2.5, width = 3)
+
+mean_length_db_all%>%
+  filter(!organelle %in% c("LMF", "Whole cells")) %>%
+  ggplot(aes(x = organelle, y = mean_length, group = organelle, fill = organelle))+
+  geom_point(shape = 21,
+             size = 2,
+             position = position_dodge(width = 0.9),
+             stat = "summary", fun = "mean") +
+  stat_summary(fun.data = "mean_sdl", 
+               fun.args = c(mult = 1), 
+               show.legend = F,
+               position = position_dodge(width = 0.9), 
+               linewidth = .5, 
+               geom = "linerange")+
+  scale_fill_manual(values = col_organelle)+
+  labs(y = "Mean no. of DBs", x = NULL)+
+  ggh4x::force_panelsizes(rows = unit(3, "cm"), cols =  unit(2, "cm")) 
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig4h_length_db.pdf"), height = 2.5, width = 3)
+```
+
+
+4i: Prism
+
+## 4j: ER vs Mito PG/BMP
+
+```{r, fig.width=2.5, fig.height=1.5, dpi=300, out.width="20%"}
+
+melt_species %>%
+  mutate(length_color = ifelse(length < 36, "34-", ifelse(length > 38, "40+", "36,38")), 
+       db_alpha = ifelse(db == 0, "0", ifelse(db == 1, "1", "2+"))) %>%
+  filter(class %in% "PG",
+         organelle %in% c("ER", "Mitochondria"))%>%
+  mutate(classpct = if_else(is.na(classpct),true = 0, false = classpct)) %>%
+  group_by(species_size, length, organelle, length_color, db_alpha) %>%
+  summarise(classpct = sum(classpct/n, na.rm = T), .groups = "drop") %>%
+  ggplot(aes(x = "", y = classpct, group = species_size)) +
+    geom_col(show.legend = F, color = "white", linewidth = 0.05, 
+             aes(fill = as.character(length_color), alpha = db_alpha))+
+    geom_text(aes(label = species_size, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_brewer(type = "qual", palette = 6)+
+    scale_alpha_manual(values = c("0" = 1, "1" = 0.7, "2+" = 0.4))+  
+    facet_wrap(~organelle)+
+    labs(x = NULL, y = NULL)+
+    theme(axis.text.x = element_blank(), 
+        axis.line.x.bottom = element_blank(),
+        axis.line.y.left = element_blank(), 
+        panel.grid.major.y = element_blank()) +
+    ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                            cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig4j_mito_ER.pdf"), height = 1.5, width = 2.5)
+```
+
+
+# --- HCT116 vs HKh-2 data ---
+
+```{r}
+
+MF36_env <- new.env()
+# output from merge filter
+load(file.path(data_path,"/MF36/LipidQuan output files/PE and PEO negative mode/Results/PAPSL_MF36.rdata"), envir = MF36_env)
+
+melt_classes_MF36 <- MF36_env$melt_classes
+```
+
+
+# Fig 5
+
+## 5a: whole cell pie charts molpct class
+
+```{r, fig.width=2.5, fig.height=1.5, dpi=200, out.width="20%"}
+class_molpct_summary_MF36 <- melt_classes_MF36%>%
+  group_by(cell, class, organelle) %>%
+  summarise(molpct = geom_mean(molpct_class, na.rm = T), .groups = "drop") %>%
+  mutate(class = factor(class, levels = order_class[order_class %in% class]), 
+         cell = factor(cell, levels = c("HKH2", "HCT116")))
+
+
+class_molpct_summary_MF36 %>%
+  filter(organelle %in% "Whole cells") %>%
+  ggplot(aes(x = "", y = molpct, fill = class))+
+    geom_col(show.legend = F, color = "white", linewidth = .1)+
+    geom_text(aes(label = class, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_manual(values = col_class)+
+    labs(x = NULL, y = NULL)  +
+  facet_wrap(~cell) +
+    theme(axis.text.x = element_blank(), 
+          axis.line.x.bottom = element_blank(),
+          axis.line.y.left = element_blank()) +
+  ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                        cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig5a_WC_class_molpct_circle.pdf"), height = 1.5, width = 2.5)
+
+```
+
+## 5b: organelle cell pie charts molpct class
+
+```{r, fig.width=8, fig.height=3, dpi=200, out.width="20%"}
+
+
+class_molpct_summary_MF36 %>%
+  filter(!organelle %in% "Whole cells") %>%
+  ggplot(aes(x = "", y = molpct, fill = class))+
+    geom_col(show.legend = F, color = "white", linewidth = .1)+
+    geom_text(aes(label = class, x=1.5), size = 2, position = position_stack(vjust = 0.5))+
+    coord_polar(theta = "y",direction = -1)+
+    scale_fill_manual(values = col_class)+
+    labs(x = NULL, y = NULL)  +
+  facet_wrap(~cell+organelle, nrow = 2) +
+    theme(axis.text.x = element_blank(), 
+          axis.line.x.bottom = element_blank(),
+          axis.line.y.left = element_blank()) +
+  ggh4x::force_panelsizes(rows = unit(2.5, "cm"),
+                        cols = unit(2.5, "cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig5b_organelle_class_molpct_circle.pdf"), height = 3, width = 8)
+
+
+```
+
+## 5c: all classes mol% barplot
+
+```{r, fig.width=8, fig.height=3, dpi=600, out.width="20%"}
+
+melt_classes_MF36 %>%
+  filter(!organelle %in% c( "LMF", "Peroxisomes")) %>%
+  mutate(cell_organelle = paste(cell, organelle, sep = "_")) %>%
+  ggplot(aes(x = organelle, y = molpct_class, fill = cell_organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", position = "dodge", 
+           show.legend = F, linewidth = 0.2, color = "black")+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, 
+               position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_cell_organelle)+
+  geom_point(size = 0.2, show.legend = F)+
+  coord_cartesian(clip = "off")+
+  labs(y = "mol%", x = NULL)+
+  facet_wrap(~class, nrow = 3, scales = "free_y")+
+  scale_y_continuous(expand = expansion(mult = c(0,0.05)))+
+  ggh4x::force_panelsizes(rows = unit(1.064,"cm"), 
+                          cols = unit(1.509,"cm"))
+
+ggsave(file.path(data_path,"/figures/pdf/Fig5c_allClassesMolpct.pdf"), height = 4, width = 11)
+```
+
+
+## 5d: PEO-/PE, PEO-/PC ratio barplots 
+
+```{r, fig.width=2.5, fig.height=2, dpi=300, out.width="20%"}
+
+ratio_PE_PEO <- melt_classes_MF36 %>%
+  filter(organelle != "Whole cells",
+         class == "PEO-") %>%
+  dplyr::select(cell, exp, organelle, molpct_r = molpct_class) %>%
+  inner_join(melt_classes_MF36) %>%
+  mutate(molpct_ratio =  molpct_r / molpct_class) %>%
+  filter(class == "PE") %>%
+  mutate(cell = factor(cell, levels = c("HKH2", "HCT116")))
+
+ratio_PE_PEO%>%
+ggplot(aes(x = organelle, y = molpct_ratio, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", show.legend = F)+
+  geom_point(size = 0.2, show.legend = F)+
+  scale_y_continuous(expand = c(0,0))+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle[!names(col_organelle) %in% c("b", "blank", "Blank", "Ctrl", "Peroxisomes", "Whole cells", "LMF")])+
+  coord_cartesian(clip = "off")+
+  facet_wrap(~cell, scale = "free_y") +
+  labs(x = NULL, y = "PEO-/PE ratio")+
+  theme(axis.text.x = element_blank())+
+  ggh4x::force_panelsizes(cols = unit(1.82,"cm"),
+                        rows = unit(2.46,"cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig5d_PEO_PE_ratio.pdf"), height = 2, width = 2.5)
+
+
+ratio_PC_PCO <- melt_classes_MF36 %>%
+  filter(organelle != "Whole cells",
+         class == "PCO-") %>%
+  dplyr::select(cell, exp, organelle, molpct_r = molpct_class) %>%
+  inner_join(melt_classes_MF36) %>%
+  mutate(molpct_ratio =  molpct_r / molpct_class) %>%
+  filter(class == "PC") %>%
+  mutate(cell = factor(cell, levels = c("HKH2", "HCT116")))
+
+ratio_PC_PCO%>%
+ggplot(aes(x = organelle, y = molpct_ratio, fill = organelle))+
+  geom_bar(stat = "summary", fun = "geom_mean", show.legend = F)+
+  geom_point(size = 0.2, show.legend = F)+
+  scale_y_continuous(expand = c(0,0))+
+  stat_summary(fun.data = geom_mean_sdl, geom = "errorbar", width = 0.4, position= position_dodge(width = .9), linewidth = 0.2)+
+  scale_fill_manual(values = col_organelle[!names(col_organelle) %in% c("b", "blank", "Blank", "Ctrl", "Peroxisomes", "Whole cells", "LMF")])+
+  coord_cartesian(clip = "off")+
+  facet_wrap(~cell, scale = "free_y") +
+  labs(x = NULL, y = "PCO-/PC ratio")+
+  theme(axis.text.x = element_blank())+
+  ggh4x::force_panelsizes(cols = unit(1.82,"cm"),
+                        rows = unit(2.46,"cm"))
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig5d_PCO_PC_ratio.pdf"), height = 2, width = 2.5)
+
+```
+
+## 5i: ethanolamine HCT116 vs HKH2
+
+```{r, fig.width=5, fig.height=2.5, dpi=300, out.width="20%"}
+
+mf38d_env <- new.env()
+
+load(file.path(data_path,"MF38d/LipidQuan output files/PE and PEO negative mode/results/PAPSL_MF38d.rdata"),envir = mf38d_env)
+
+melt_classes_mf38d <- mf38d_env$melt_classes
+
+melt_classes_mf38d$cell <- factor(melt_classes_mf38d$cell, levels = c("HKH2", "HCT116"))
+
+melt_classes_mf38d$treatment <- factor(melt_classes_mf38d$treatment, levels = c("none", "eth3"))
+
+
+melt_classes_mf38d%>%
+  filter(class %in% c("PE", "PEO-", "PC", "PCO-"))%>%
+  ggplot(aes (x = cell, y = molpct_class, fill = treatment))+
+  geom_bar(stat = "summary", fun = "geom_mean", position = "dodge")+
+  stat_summary(fun.data = geom_mean_sdl, geom= "errorbar", width = .4, linewidth = 0.2, position = position_dodge(width = 0.9))+
+  geom_point(size = 0.2, show.legend = F, position = position_dodge(width = 0.9))+
+  scale_y_continuous(expand = expansion( mult = c(0,0.025)))+
+  scale_fill_brewer(palette = 1)+
+  facet_wrap(~class, scales = "free", nrow = 1)+
+  labs(y = "Lipid abundance (mol%)", x = NULL)+
+  ggh4x::force_panelsizes(rows = unit(3, "cm"), cols =  unit(2, "cm")) 
+
+ggsave(file.path(data_path, "/Figures/pdf/Fig5j_EA.pdf"), height = 2.5, width = 5)
+```
+
+## 5j: ethamolamine HCT116 vs HKH2
+
+```{r, fig.width=5, fig.height=2.5, dpi=300, out.width="20%"}
+
+mf38c_env <- new.env()
+
+load(file.path(data_path,"MF38c/LipidQuan output files/PE and PEO negative mode/results/PAPSL_MF38c.rdata"),envir = mf38c_env)
+
+melt_classes_mf38c <- mf38c_env$melt_classes %>%
+  mutate(cell = factor(cell, levels = c("HKH2", "HCT116")), 
+         D4 = ifelse(grepl("D4", class), "D4", "no_label"), 
+         class = gsub("OD4", "O-", class), 
+         class = gsub("D4", "", class))
+
+melt_classes_mf38c <- melt_classes_mf38c %>%
+  filter(D4 == "D4") %>%
+  dplyr::select(cell, treatment, class, id, molpct_class_d4 = molpct_class) %>%
+  inner_join(melt_classes_mf38c, .,by = join_by(id, cell, treatment, class)) %>%
+  filter(D4 != "D4") %>%
+  mutate(d4_pct = molpct_class_d4 / (molpct_class_d4 + molpct_class) * 100)
+
+
+melt_classes_mf38c%>%
+  filter(class %in% c("PE", "PEO-", "LPE", "LPEO-"),
+         treatment == "ethD4")%>%
+  ggplot(aes (x = cell, y = d4_pct, fill = class))+
+  geom_bar(stat = "summary", fun = "geom_mean")+
+  stat_summary(fun.data = geom_mean_sdl, geom= "errorbar", width = .4, linewidth = 0.2)+
+  geom_point(size = 0.2, show.legend = F)+
+  scale_y_continuous(expand = expansion( mult = c(0,0.025)))+
+  scale_fill_manual(values = col_class)+
+  facet_wrap(~class, nrow = 1)+
+  labs(y = "2H4-labelled fraction (%)", x = NULL)+
+  ggh4x::force_panelsizes(rows = unit(3, "cm"), cols =  unit(2, "cm")) 
+
+ggsave(file.path(data_path, "Figures/pdf/Fig5k_length_db.pdf"), height = 2.5, width = 5)
+
+
+```
+
+
+# --- Supplementary figures ---
+
+Fig S1 - WB, HeLa
+
+## Fig S2 - HeLa, database filter
+
+```{r}
+
+filter_plot %>%
+  ggplot(aes(x = lipid, y = db, fill = step))+
+  geom_tile(linewidth = 0.5, color = "black")+
+  scale_fill_manual(values = c('Remove by database' = "black", 
+                               Included = "#003F7D", 
+                               'Remove by blank' = "grey"))+
+  scale_y_continuous(breaks = seq(0,100,1))+
+  facet_wrap(~row, nrow = 2, scales = "free_x")+
+  theme(strip.text = element_blank())+
+  labs(y = "Total number of hydrocarbon chain bond", x = NULL , fill = NULL)+
+  ggh4x::force_panelsizes(rows = unit(4, "cm"),
+                          cols = unit(18, "cm"))
+
+
+ggsave(file.path(data_path, "/Figures/pdf/Sup_FigS2_LipidDetectionAndFiltering.pdf"), height = 12, width = 25, units = "cm")
+
+  
+```
+
