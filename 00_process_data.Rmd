@@ -221,7 +221,6 @@ for(i in seq_along(lipidQuan_output_folder)) {
                   paste(exp_ID[i], polarity[i])
                   ))
 
-
 merge_and_filter(
   lipidQuan_output_folder = lipidQuan_output_folder[i],
   samples_path = samples_path[i],
@@ -260,31 +259,29 @@ Organelle PCA, log-scale, replacing NA with log2(1e-5)
 
 
 ## SPECIFIC SAMPLE SETTINGS
-exp_IDs <- rep(c("MF35", "MF36", "MF38c", "MF38d"), each = 2)
+exp_IDs <- rep(c("MF35", "MF36"), each = 2)
 
-polarities <- rep(c("negative", "positive"),4)
+polarities <- rep(c("negative", "positive"),2)
 
 # LipidQuant output folders
 lipidQuan_output_folders <- file.path(
   data_path,
   exp_IDs,
   "LipidQuan output files",
-  paste0("PE and PEO ",polarity," mode")
+  paste0("PE and PEO ",polarities," mode")
 )
 
 # Analysis output files
-output_files <- paste0(exp_ID,"_analysis_",polarities,".rdata")
+output_files <- paste0(exp_IDs,"_analysis_",polarities,".rdata")
 
 # Compare cells or organelles?
-compare <- c(rep("organelle",2), rep("cell",6))
+compare <- c(rep("organelle",2), rep("cell",2))
 
 # GENERAL SETTINGS
 
 # Organelles to include in the analysis
 organelles_for_analysis <- rep(list(c("Mitochondria", "ER", "Cis-Golgi", "Trans-Golgi",
-                             "Plasma membrane", "Lysosomes")),8)
-
-organelles_for_analysis[5:8] <- "Whole cells"
+                             "Plasma membrane", "Lysosomes")),4)
 
 # 'imputation' value for NAs in PCA
 pca_na_replace <- log2(1e-5)
@@ -299,7 +296,7 @@ lipid_level <- "class"
 test_val <- log2(0.1)
 
 # Only HeLa is analysed by ANOVA organelle comparisons
-anova_tests <- c(rep(TRUE,2), rep(FALSE,6))
+anova_tests <- c(rep(TRUE,2), rep(FALSE,2))
 
 ```
 
@@ -312,7 +309,7 @@ for(i in seq_along(lipidQuan_output_folders)) {
   
   message(sprintf("%d/%d Processing %s", 
                   i, length(lipidQuan_output_folders),
-                  paste(exp_ID[i], polarity[i])
+                  paste(exp_IDs[i], polarities[i])
                   ))
 
 analyse_merged_data(lipidQuan_output_folder = lipidQuan_output_folders[i],
