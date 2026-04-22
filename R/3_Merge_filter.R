@@ -75,14 +75,13 @@ mergeSpecies <- function(files,dir){
 #' Merges all files ending with "tableauOutput.csv" in the input folder.
 #' 
 #'@param dir folder containing lipidQuan output files
-merge_files <- function(dir, samples_path, order_organelles, filtered_classes, removed_raws = NULL) {
+merge_files <- function(dir, samples_path, order_organelles, removed_raws = NULL) {
   
   tableau_filenames <- list.files(path = dir, pattern = "tableauOutput.csv$") 
   
-  # Merge all out-files and remove 'filtered_classes'
-  merged_species <- mergeSpecies(tableau_filenames, dir) %>%
-    filter(!lipid_class_name(species) %in% filtered_classes)
-
+  # Merge all out-files
+  merged_species <- mergeSpecies(tableau_filenames, dir) 
+  
   # read sample info, add necessary columns if missing
   samples <- read_csv(samples_path, col_types = cols(.default = "c")) %>%
     mutate(
@@ -228,21 +227,22 @@ database_filter <- function(df, database_path) {
 
 ## 5: Calculate molpct, classpct etc ----
 
-calculate_molpct <- function(df) {
+calculate_molpct <- function(df, filtered_classes) {
   
-df %>%
-  mutate(organelle = factor(organelle, 
-                            levels = order_organelles[order_organelles %in% organelle]))%>%
-  group_by(organelle, exp, id) %>%
-  mutate(molpct = pmol / sum(pmol, na.rm = T) * 100) %>%
-  group_by(organelle, exp, class, id) %>%
-  mutate(molpct_class = sum(molpct, na.rm = T), 
-         classpct = pmol / sum(pmol, na.rm = T) * 100) %>%
-  group_by(organelle, exp, cat, id) %>%
-  mutate(molpct_cat = sum(molpct, na.rm = T), 
-         catpct = pmol / sum(pmol, na.rm = T) * 100) %>%
-  ungroup() %>%
-  mutate(log2_molpct = log2(molpct))
+  df %>%
+    filter(!lipid_class_name(species) %in% filtered_classes) %>%
+    mutate(organelle = factor(organelle, 
+                              levels = order_organelles[order_organelles %in% organelle]))%>%
+    group_by(organelle, exp, id) %>%
+    mutate(molpct = pmol / sum(pmol, na.rm = T) * 100) %>%
+    group_by(organelle, exp, class, id) %>%
+    mutate(molpct_class = sum(molpct, na.rm = T), 
+           classpct = pmol / sum(pmol, na.rm = T) * 100) %>%
+    group_by(organelle, exp, cat, id) %>%
+    mutate(molpct_cat = sum(molpct, na.rm = T), 
+           catpct = pmol / sum(pmol, na.rm = T) * 100) %>%
+    ungroup() %>%
+    mutate(log2_molpct = log2(molpct))
   
 }
 
@@ -361,10 +361,12 @@ long_to_tableau_format <- function(df) {
 
 arrange_filter_plot <- function(merged_species_long, 
                                 species_replicate_filter, 
-                                species_database_filter) {
+                                species_database_filter,
+                                filtered_classes) {
   
 
 filter_plot <- merged_species_long %>%
+  filter(!lipid_class_name(species) %in% filtered_classes) %>%  
   filter(pmol > 0) %>%
   group_by(species, length, db, class) %>%
   summarise("merged_species" = n()>0, .groups = "drop")
@@ -501,7 +503,6 @@ merge_and_filter <- function(lipidQuan_output_folder,
   merged_species_long <- merge_files(dir = lipidQuan_output_folder, 
                                      samples_path = samples_path, 
                                      order_organelles = order_organelles, 
-                                     filtered_classes = filtered_classes,
                                      removed_raws = removed_rows)
   
   summarise_dataset_long(merged_species_long, title = "Input data")
@@ -528,7 +529,7 @@ merge_and_filter <- function(lipidQuan_output_folder,
   summarise_dataset_long(species_database_filter,title = "Database filter")
   
   # Calculate molpct, classpct, log2 etc
-  processed_data <- calculate_molpct(species_database_filter)
+  processed_data <- calculate_molpct(species_database_filter, filtered_classes)
   
   # Tableau data
   tableau_data <- long_to_tableau_format(processed_data)
@@ -538,7 +539,8 @@ merge_and_filter <- function(lipidQuan_output_folder,
   # Arrange plots
   filter_plot <- arrange_filter_plot(merged_species_long, 
                                      species_replicate_filter, 
-                                     species_database_filter)
+                                     species_database_filter,
+                                     filtered_classes)
   
   # csv files
   write_csv(
@@ -558,6 +560,7 @@ merge_and_filter <- function(lipidQuan_output_folder,
   # supplementary data
   save(melt_species_pex, 
        melt_classes_pex, 
+       species_database_filter,
        filter_plot, 
        file = file.path(lipidQuan_output_folder, 
                         "Results", 
