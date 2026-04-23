@@ -287,7 +287,7 @@ organelles_for_analysis <- rep(list(c("Mitochondria", "ER", "Cis-Golgi", "Trans-
 pca_na_replace <- log2(1e-5)
 
 # value col to use for t-tests
-value_col <- "molpct"
+value_col <- "log2_molpct"
 
 # compare classes or species?
 lipid_level <- "class"
